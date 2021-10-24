@@ -14,11 +14,12 @@ $ python script.py
 ```
 
 #### Dependencies
-* [PyTorch](https://pytorch.org)
+* [PyTorch](https://pytorch.org) (>=1.9)
 
 
 #### Example Output
 
+<img src="out.pdf" width="800" align="middle" alt="SM GP output">
 
 
 #### See Also

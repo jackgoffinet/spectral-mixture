@@ -18,6 +18,7 @@ from torch.distributions import Normal, MultivariateNormal, Categorical, \
 from torch.utils.data import TensorDataset, DataLoader
 
 
+MAX_X = 1.0 # maximum x-value
 MAX_FREQ = 20.0 # maximum frequency
 EPSILON = 2e-5 # for numerical stability
 
@@ -133,61 +134,20 @@ class SMGP(torch.nn.Module):
         return samples
 
 
-    def plot_samples(self, xs, ys, n_samples=3, spacing=6):
-        """Plot some real and generated samples."""
-        samples = self.sample(xs, n_samples)
-        x = xs.detach().cpu().numpy()
-        y = ys.detach().cpu().numpy()
-        samples = samples.detach().cpu().numpy()
-        for i in range(n_samples):
-            label = 'model' if i == 0 else None
-            plt.plot(x, spacing*i + samples[i], c='darkorchid', label=label)
-            label = 'data' if i == 0 else None
-            plt.plot(x, spacing*i + y[i], c='goldenrod', label=label)
-        plt.axis('off')
-        plt.legend()
-        plt.savefig('samples.pdf')
-        plt.close('all')
-
-
-    def plot_forecast(self, xs, ys, idx=2):
-        """Plot the GP forecast."""
-        with torch.no_grad():
-            t = xs.shape[0]
-            # Calculate the kernel matrix.
-            kernel_mat = self._get_kernel_mat(xs)
-            # Calculate the forecast by Gaussian conditioning. These formulas
-            # can be found here, for example, under "Conditional distributions":
-            # https://en.wikipedia.org/wiki/Multivariate_normal_distribution
-            k11 = kernel_mat[:t//2,:t//2]
-            k12 = kernel_mat[:t//2,t//2:]
-            k22 = kernel_mat[t//2:,t//2:]
-            k11_inv = torch.inverse(k11)
-            mean = k12.T @ k11_inv @ ys[idx,:t//2].unsqueeze(-1)
-            mean = mean.squeeze(-1)
-            covar = k22 - k12.T @ k11_inv @ k12
-            stds = torch.diag(covar).sqrt()
-        xs = xs.detach().cpu().numpy()
-        ys = ys.detach().cpu().numpy()
-        mean = mean.detach().cpu().numpy()
-        stds = stds.detach().cpu().numpy()
-        # Plot.
-        plt.plot(xs, ys[idx])
-        plt.plot(xs[t//2:], mean, c='goldenrod')
-        plt.fill_between(xs[t//2:], mean-stds, mean+stds, fc='goldenrod', \
-                alpha=0.2)
-        plt.savefig('forecast.pdf')
-        plt.close('all')
-
-
-    def plot_psd(self, true_model, n_freqs=400):
+    def get_psd(self, n_freqs=400):
         """
-        Plot the kernel frequency representation.
+        Get the kernel power spectral density.
 
         Parameters
         ----------
-        true_model : SMGP
         n_freqs : int, optional
+            Number of frequencies to evaluate.
+
+        Returns
+        -------
+        psd : numpy.ndarray
+            Power spectral density
+            Shape: [n_freqs]
         """
         freqs = torch.linspace(0, MAX_FREQ, n_freqs)
         with torch.no_grad():
@@ -197,28 +157,116 @@ class SMGP(torch.nn.Module):
             mix = Categorical(logits=self.log_w)
             comp = Normal(loc=self.μ, scale=(0.5*self.log_v).exp())
             gmm = MixtureSameFamily(mix, comp)
-            model_probs = gmm.log_prob(freqs).exp() + gmm.log_prob(-freqs).exp()
-            model_probs = model_probs / 2
-            model_probs = model_probs.detach().cpu().numpy()
-        # Make the ground truth GMM.
-        probs = torch.tensor(WEIGHTS).to(torch.float).view(-1)
-        loc = torch.tensor(FREQS).to(torch.float).view(-1)
-        scale = torch.tensor(STDS).to(torch.float).view(-1)
-        mix = Categorical(probs=probs)
-        comp = Normal(loc=loc, scale=scale)
-        gmm = MixtureSameFamily(mix, comp)
-        true_probs = gmm.log_prob(freqs).exp() + gmm.log_prob(-freqs).exp()
-        true_probs = true_probs / 2
-        true_probs = true_probs.detach().cpu().numpy()
-        freqs = freqs.detach().cpu().numpy()
+            psd = (gmm.log_prob(freqs).exp() + gmm.log_prob(-freqs).exp()) / 2
+        return psd.detach().numpy()
+
+
+    def plot_samples(self, xs, ys, n_samples=2, spacing=10, ax=None):
+        """
+        Plot some real and generated samples.
+
+        Parameters
+        ----------
+        xs : torch.Tensor
+            Shape: [t]
+        ys : torch.Tensor
+            Shape: [b,t]
+        n_samples : int, optional
+        spacing : int, optional
+            Vertical spacing between samples
+        ax : None or matplotlib.axes._subplots.AxesSubplot
+        """
+        samples = self.sample(xs, n_samples)
+        x = xs.detach().numpy()
+        y = ys.detach().numpy()
+        samples = samples.detach().numpy()
+        if ax is not None:
+            plt.sca(ax)
+        for i in range(n_samples):
+            label = 'data' if i == 0 else None
+            plt.plot(x, spacing*i + y[i], c='tab:blue', label=label)
+            label = 'model' if i == 0 else None
+            plt.plot(x+MAX_X+0.1, spacing*i + samples[i], c='goldenrod', \
+                    label=label)
+        plt.axis('off')
+        plt.title("Generated Samples")
+        plt.legend()
+
+
+    def plot_forecast(self, xs, ys, idx=0, ax=None):
+        """
+        Plot a GP forecast on the second half of `ys[idx]`.
+
+        Parameters
+        ----------
+        xs : torch.Tensor
+            Shape: [t]
+        ys : torch.Tensor
+            Shape: [b,t]
+        idx : int, optional
+            Index for `ys`.
+        ax : None or matplotlib.axes._subplots.AxesSubplot
+        """
+        with torch.no_grad():
+            t = xs.shape[0]
+            temp_xs = torch.cat([xs[:t//2], xs])
+            # Calculate the kernel matrix.
+            kernel_mat = self._get_kernel_mat(temp_xs)
+            # Calculate the forecast by Gaussian conditioning. These formulas
+            # can be found here, for example, under "Conditional distributions":
+            # https://en.wikipedia.org/wiki/Multivariate_normal_distribution
+            k11 = kernel_mat[:t//2,:t//2]
+            k12 = kernel_mat[:t//2,t//2:]
+            k22 = kernel_mat[t//2:,t//2:]
+            # print(k11.shape, k12.shape)
+            temp = torch.linalg.solve(k11, k12).T
+            # k11_inv = torch.inverse(k11)
+            mean = (temp @ ys[idx,:t//2].unsqueeze(-1)).squeeze(-1)
+            covar = k22 - temp @ k12
+            stds = torch.diag(covar).sqrt()
+        xs = xs.detach().numpy()
+        ys = ys.detach().numpy()
+        mean = mean.detach().numpy()
+        stds = stds.detach().numpy()
         # Plot.
-        plt.plot(freqs, true_probs, label='ground truth')
-        plt.plot(freqs, model_probs, label='model')
+        if ax is not None:
+            plt.sca(ax)
+        plt.axvline(x=xs[t//2], c='k', ls='--', alpha=0.5)
+        plt.plot(xs, mean, c='goldenrod', label="model")
+        plt.fill_between(xs, mean-stds, mean+stds, fc='goldenrod', alpha=0.2)
+        plt.plot(xs, ys[idx], c='tab:blue', label="data")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.legend(loc='best')
+        plt.title("Forecast")
+        for dir in ['top', 'right']:
+            plt.gca().spines[dir].set_visible(False)
+
+
+    def plot_psd(self, true_model, n_freqs=400, ax=None):
+        """
+        Plot the kernel frequency representation.
+
+        Parameters
+        ----------
+        true_model : SMGP
+        n_freqs : int, optional
+        ax : None or matplotlib.axes._subplots.AxesSubplot
+        """
+        model_psd = self.get_psd(n_freqs=n_freqs)
+        true_psd = true_model.get_psd(n_freqs=n_freqs)
+        freqs = torch.linspace(0, MAX_FREQ, n_freqs)
+        # Plot.
+        if ax is not None:
+            plt.sca(ax)
+        plt.plot(freqs, true_psd, c='tab:blue', label='ground truth')
+        plt.plot(freqs, model_psd, c='goldenrod', label='model')
         plt.xlabel("Frequency")
         plt.ylabel("Spectral Density")
         plt.legend(loc='best')
-        plt.savefig('kernel_psd.pdf')
-        plt.close('all')
+        plt.title("Power Spectral Densities")
+        for dir in ['top', 'right']:
+            plt.gca().spines[dir].set_visible(False)
 
 
 
@@ -238,18 +286,21 @@ def generate_data(n=2048, t=200):
     model.μ.data = TRUE_μ
     model.log_v.data = ΤRUE_LOG_V
     model.log_w.data = TRUE_LOG_W
-    xs = torch.linspace(0,1,t)
+    xs = torch.linspace(0, MAX_X, t)
     return model, xs, model.sample(xs, n)
 
 
 
 if __name__ == '__main__':
-    load_model = True
+    # Parameters
+    load_model = False
     save_model = True
-    epochs = 200
+    epochs = 500
+    torch.manual_seed(42)
 
     # Get the data and make a Dataloader.
-    true_model, xs, ys = generate_data()
+    true_model, xs, ys = generate_data() # SMGP, [t], [n,t]
+    forecast_ys = true_model.sample(xs, 1) # Forecast on held-out data.
     dataset = TensorDataset(ys)
     loader = DataLoader(dataset, batch_size=128, shuffle=True)
 
@@ -258,6 +309,15 @@ if __name__ == '__main__':
     if load_model:
         checkpoint = torch.load('state.tar')
         model.load_state_dict(checkpoint)
+
+    # Make some plots.
+    fig, axarr = plt.subplots(nrows=3, figsize=(9,7))
+    model.plot_samples(xs, ys, ax=axarr[0])
+    model.plot_psd(true_model, ax=axarr[1])
+    model.plot_forecast(xs, ys, ax=axarr[2])
+    plt.tight_layout()
+    plt.savefig('out.pdf')
+    quit()
 
     # Enter a training loop to optimize the kernel parameters.
     optimizer = torch.optim.Adam(model.parameters())
@@ -272,14 +332,17 @@ if __name__ == '__main__':
         if i % 10 == 0:
             print(f"Epoch {i:03d}, loss: {epoch_loss:.3f}")
 
-    # Make some plots.
-    model.plot_psd()
-    model.plot_samples(xs, ys)
-    model.plot_forecast(xs, ys)
-
     # Save the model.
     if save_model:
         torch.save(model.state_dict(), 'state.tar')
+
+    # Make some plots.
+    fig, axarr = plt.subplots(nrows=3, figsize=(9,7))
+    model.plot_samples(xs, ys, ax=axarr[0])
+    model.plot_psd(true_model, ax=axarr[1])
+    model.plot_forecast(xs, ys, ax=axarr[2])
+    plt.tight_layout()
+    plt.savefig('out.pdf')
 
 
 ###

@@ -1,3 +1,5 @@
 *.tar
 *.pdf
+!out.pdf
+*.npy
 *.DS_Store
