@@ -310,15 +310,6 @@ if __name__ == '__main__':
         checkpoint = torch.load('state.tar')
         model.load_state_dict(checkpoint)
 
-    # Make some plots.
-    fig, axarr = plt.subplots(nrows=3, figsize=(9,7))
-    model.plot_samples(xs, ys, ax=axarr[0])
-    model.plot_psd(true_model, ax=axarr[1])
-    model.plot_forecast(xs, ys, ax=axarr[2])
-    plt.tight_layout()
-    plt.savefig('out.pdf')
-    quit()
-
     # Enter a training loop to optimize the kernel parameters.
     optimizer = torch.optim.Adam(model.parameters())
     for i in range(epochs):
@@ -342,7 +333,7 @@ if __name__ == '__main__':
     model.plot_psd(true_model, ax=axarr[1])
     model.plot_forecast(xs, ys, ax=axarr[2])
     plt.tight_layout()
-    plt.savefig('out.pdf')
+    plt.savefig('out.jpg', dpi=300)
 
 
 ###

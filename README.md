@@ -1,4 +1,4 @@
-## Spectral Mixture Kernel
+## Spectral Mixture Kernel Gaussian Process
 
 A minimal working example of the spectral mixture kernel introduced in:
 > Wilson, A., & Adams, R. (2013). Gaussian process kernels for pattern
@@ -19,7 +19,7 @@ $ python script.py
 
 #### Example Output
 
-<img src="out.pdf" width="800" align="middle" alt="SM GP output">
+<img src="out.jpg" width="600" align="middle" alt="SM GP output">
 
 
 #### See Also
